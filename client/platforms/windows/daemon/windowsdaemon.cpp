@@ -62,6 +62,7 @@ void WindowsDaemon::prepareActivation(const InterfaceConfig& config, int inetAda
 }
 
 void WindowsDaemon::activateSplitTunnel(const InterfaceConfig& config, int vpnAdapterIndex) {
+    maybeRecreateSplitTunnelManager(config);
     if (m_splitTunnelManager == nullptr) {
         if (config.m_vpnDisabledApps.length() > 0) {
             logger.error() << "Split tunnel manager is not initialized";
@@ -90,7 +91,23 @@ void WindowsDaemon::activateSplitTunnel(const InterfaceConfig& config, int vpnAd
   }
 }
 
+void WindowsDaemon::maybeRecreateSplitTunnelManager(const InterfaceConfig& config) {
+  // The split tunnel driver can be temporarily unopenable at daemon startup
+  // (e.g. a marked-for-deletion service entry left by the previous daemon
+  // session). Instead of staying dead until the next service restart, retry
+  // creating the manager whenever split tunneling is actually requested.
+  if (m_splitTunnelManager != nullptr ||
+      config.m_vpnDisabledApps.length() == 0) {
+    return;
+  }
+  logger.info() << "Split tunnel manager missing, attempting re-init";
+  m_splitTunnelManager = WindowsSplitTunnel::create(m_firewallManager);
+}
+
 bool WindowsDaemon::run(Op op, const InterfaceConfig& config) {
+  if (op == Up) {
+    maybeRecreateSplitTunnelManager(config);
+  }
   if (!m_splitTunnelManager) {
     if (config.m_vpnDisabledApps.length() > 0) {
       // The Client has sent us a list of disabled apps, but we failed

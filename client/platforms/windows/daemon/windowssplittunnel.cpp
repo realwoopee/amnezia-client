@@ -222,10 +222,11 @@ std::unique_ptr<WindowsSplitTunnel> WindowsSplitTunnel::create(
     if (driverFile != INVALID_HANDLE_VALUE) {
       break;
     }
-    if (GetLastError() != ERROR_SHARING_VIOLATION) {
+    const auto err = GetLastError();
+    if (err != ERROR_SHARING_VIOLATION && err != ERROR_ACCESS_DENIED) {
       break;
     }
-    logger.info() << "Driver symlink is busy, retrying";
+    logger.info() << "Driver symlink is busy (err" << err << "), retrying";
     Sleep(200);
   }
   if (driverFile == INVALID_HANDLE_VALUE) {
@@ -336,6 +337,16 @@ WindowsSplitTunnel::WindowsSplitTunnel(HANDLE driverIO) : m_driver(driverIO) {
 
 WindowsSplitTunnel::~WindowsSplitTunnel() {
   CloseHandle(m_driver);
+  // Stop the driver before deleting its service entry: DeleteService on a
+  // running service only marks it for deletion, leaving a zombie that the
+  // next daemon session cannot open (ERROR_ACCESS_DENIED on the symlink).
+  auto driver_manager =
+      WindowsServiceManager::open(QString::fromWCharArray(DRIVER_SERVICE_NAME));
+  if (driver_manager != nullptr && driver_manager->isRunning()) {
+    if (!driver_manager->stopService()) {
+      logger.warning() << "Failed to stop Split Tunnel driver on shutdown";
+    }
+  }
   uninstallDriver();
 }
 
