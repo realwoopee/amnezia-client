@@ -211,10 +211,23 @@ std::unique_ptr<WindowsSplitTunnel> WindowsSplitTunnel::create(
       return nullptr;
     };
   }
-  // 03: Open the Driver Symlink
-  auto driverFile = CreateFileW(DRIVER_SYMLINK, GENERIC_READ | GENERIC_WRITE, 0,
-                                nullptr, OPEN_EXISTING, 0, nullptr);
-  ;
+  // 03: Open the Driver Symlink. The symlink is opened with exclusive access;
+  // when the daemon is restarted through SCM the previous instance may still
+  // hold its handle for a moment, so retry a few times before falling back to
+  // rebooting the driver.
+  HANDLE driverFile = INVALID_HANDLE_VALUE;
+  for (int attempt = 0; attempt < 10; attempt++) {
+    driverFile = CreateFileW(DRIVER_SYMLINK, GENERIC_READ | GENERIC_WRITE, 0,
+                             nullptr, OPEN_EXISTING, 0, nullptr);
+    if (driverFile != INVALID_HANDLE_VALUE) {
+      break;
+    }
+    if (GetLastError() != ERROR_SHARING_VIOLATION) {
+      break;
+    }
+    logger.info() << "Driver symlink is busy, retrying";
+    Sleep(200);
+  }
   if (driverFile == INVALID_HANDLE_VALUE) {
     WindowsUtils::windowsLog("Failed to open Driver: ");
     // Only once, if the opening did not work. Try to reboot it. #
