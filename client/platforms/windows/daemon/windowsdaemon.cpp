@@ -92,10 +92,9 @@ void WindowsDaemon::activateSplitTunnel(const InterfaceConfig& config, int vpnAd
 }
 
 void WindowsDaemon::maybeRecreateSplitTunnelManager(const InterfaceConfig& config) {
-  // The split tunnel driver can be temporarily unopenable at daemon startup
-  // (e.g. a marked-for-deletion service entry left by the previous daemon
-  // session). Instead of staying dead until the next service restart, retry
-  // creating the manager whenever split tunneling is actually requested.
+  // The driver can be temporarily unopenable at daemon startup (a previous
+  // session leaves its service entry marked for deletion), so retry whenever
+  // split tunneling is actually requested.
   if (m_splitTunnelManager != nullptr ||
       config.m_vpnDisabledApps.length() == 0) {
     return;

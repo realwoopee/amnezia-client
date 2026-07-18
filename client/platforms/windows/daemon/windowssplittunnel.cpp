@@ -211,10 +211,9 @@ std::unique_ptr<WindowsSplitTunnel> WindowsSplitTunnel::create(
       return nullptr;
     };
   }
-  // 03: Open the Driver Symlink. The symlink is opened with exclusive access;
-  // when the daemon is restarted through SCM the previous instance may still
-  // hold its handle for a moment, so retry a few times before falling back to
-  // rebooting the driver.
+  // 03: Open the Driver Symlink. A previous daemon session may leave the
+  // driver service marked for deletion, which makes the open fail with
+  // ERROR_ACCESS_DENIED for a short while, so retry briefly.
   HANDLE driverFile = INVALID_HANDLE_VALUE;
   for (int attempt = 0; attempt < 10; attempt++) {
     driverFile = CreateFileW(DRIVER_SYMLINK, GENERIC_READ | GENERIC_WRITE, 0,
@@ -252,44 +251,9 @@ std::unique_ptr<WindowsSplitTunnel> WindowsSplitTunnel::create(
     }
   }
   if (!initDriver(driverFile)) {
-    // The driver survived a previous daemon session and its state cannot be
-    // reset (IOCTL_ST_RESET fails once WFP handles were engaged). Unloading
-    // the driver from the kernel is the only way back to a clean state, so
-    // stop it, reinstall the service entry if it was marked for deletion by
-    // the previous session and retry once.
-    logger.error() << "Failed to init driver, attempting driver reinstall";
+    logger.error() << "Failed to init driver";
     CloseHandle(driverFile);
-
-    if (!driver_manager->stopService()) {
-      logger.error() << "Unable to stop driver for reinstall";
-      return nullptr;
-    }
-    if (!isInstalled()) {
-      logger.debug() << "Driver service was removed on stop, reinstalling";
-      auto handle = installDriver();
-      if (handle == INVALID_HANDLE_VALUE) {
-        WindowsUtils::windowsLog("Failed to reinstall Driver");
-        return nullptr;
-      }
-      CloseServiceHandle(handle);
-    }
-    driver_manager = WindowsServiceManager::open(
-        QString::fromWCharArray(DRIVER_SERVICE_NAME));
-    if (driver_manager == nullptr || !driver_manager->startService()) {
-      logger.error() << "Failed to start reinstalled Split Tunnel Service";
-      return nullptr;
-    }
-    driverFile = CreateFileW(DRIVER_SYMLINK, GENERIC_READ | GENERIC_WRITE, 0,
-                             nullptr, OPEN_EXISTING, 0, nullptr);
-    if (driverFile == INVALID_HANDLE_VALUE) {
-      WindowsUtils::windowsLog("Failed to open reinstalled Driver: ");
-      return nullptr;
-    }
-    if (!initDriver(driverFile)) {
-      logger.error() << "Failed to init driver after reinstall";
-      CloseHandle(driverFile);
-      return nullptr;
-    }
+    return nullptr;
   }
   // We're ready to talk to the driver, it's alive and setup.
   return std::make_unique<WindowsSplitTunnel>(driverFile);
@@ -337,16 +301,6 @@ WindowsSplitTunnel::WindowsSplitTunnel(HANDLE driverIO) : m_driver(driverIO) {
 
 WindowsSplitTunnel::~WindowsSplitTunnel() {
   CloseHandle(m_driver);
-  // Stop the driver before deleting its service entry: DeleteService on a
-  // running service only marks it for deletion, leaving a zombie that the
-  // next daemon session cannot open (ERROR_ACCESS_DENIED on the symlink).
-  auto driver_manager =
-      WindowsServiceManager::open(QString::fromWCharArray(DRIVER_SERVICE_NAME));
-  if (driver_manager != nullptr && driver_manager->isRunning()) {
-    if (!driver_manager->stopService()) {
-      logger.warning() << "Failed to stop Split Tunnel driver on shutdown";
-    }
-  }
   uninstallDriver();
 }
 
