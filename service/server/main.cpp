@@ -51,10 +51,6 @@ int main(int argc, char **argv)
         return runApplication(argc, argv);
     }
     else {
-        // Local build: always log to the service log file so that daemon
-        // startup (split tunnel driver init) is diagnosable without waiting
-        // for the client to enable logging over IPC.
-        Logger::init(true);
         qInfo() << "Started as system service";
 #ifdef Q_OS_WIN
         SystemService systemService(argc, argv);
